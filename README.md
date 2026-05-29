@@ -226,7 +226,8 @@ docker compose down -v
 
 ## Autores
 
-- **Diego Abaroa Ramos** — [@Steeein](https://github.com/Steeein)
+- **Diego Abaroa** — [@Steeein](https://github.com/Steeein)
+- **Claudio Ramos**
 
 ---
 
