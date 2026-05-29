@@ -1,0 +1,1774 @@
+openapi: 3.0.3
+
+# =============================================================================
+# ProviEmplea API — Especificación OpenAPI 3.0
+# Evaluación Sumativa U3 · Desarrollo Backend
+# Instituto Profesional San Sebastián
+# =============================================================================
+
+info:
+  title: ProviEmplea API
+  version: "1.0.0"
+  description: |
+    ## Descripción General
+
+    **ProviEmplea** es una plataforma digital de empleo de **búsqueda inversa**,
+    desarrollada para el Departamento de Empleo de la Municipalidad de Providencia.
+
+    En lugar del modelo tradicional donde los candidatos postulan a ofertas,
+    en ProviEmplea **las empresas buscan activamente a los talentos** según sus
+    perfiles de competencias, experiencia y formación.
+
+    ### Principio de CV Ciego
+    Para eliminar sesgos en la selección, la plataforma implementa el concepto
+    de **curriculum ciego**: las empresas no tienen acceso a datos
+    sociodemográficos de los candidatos (nombre, edad, género, comuna de
+    residencia). Solo visualizan competencias, experiencia y condiciones
+    laborales.
+
+    ### Recursos disponibles
+    - **Health** — Verificación del estado del servicio
+    - **Personas** — Gestión de perfiles de talentos/vecinos
+    - **Empresas** — Gestión de empresas empleadoras
+    - **Administración** — Seguimiento del proceso de intermediación
+
+    ### Convenciones de respuesta
+    Todas las respuestas siguen el mismo formato:
+    ```json
+    { "success": true,  "data": { ... } }
+    { "success": false, "message": "...", "errors": { ... } }
+    ```
+
+    ### Rendimiento y optimización
+    - **Rate Limiting:** 60 solicitudes por minuto por IP (configurable en `config/app.php`)
+    - **Caché:** Los endpoints `GET /personas` y `GET /empresas` usan caché de 5 minutos
+    - **Tiempos de respuesta esperados:**
+      | Operación | Tiempo esperado |
+      |-----------|----------------|
+      | GET lista | < 200 ms |
+      | GET por ID | < 100 ms |
+      | POST / PUT | < 300 ms |
+      | PATCH estado | < 150 ms |
+      | GET estadísticas | < 500 ms |
+
+  contact:
+    name: Departamento de Empleo Providencia
+    email: solange.montaldo@providencia.cl
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080/api
+    description: Servidor de desarrollo local (Docker)
+
+tags:
+  - name: Health
+    description: Endpoints de observabilidad y estado del sistema
+  - name: Personas
+    description: |
+      Gestión de perfiles de talentos/vecinos de Providencia.
+      Los perfiles se exponen en formato **CV ciego** en el listado público,
+      ocultando datos identificatorios para evitar discriminación arbitraria.
+  - name: Empresas
+    description: |
+      Gestión de empresas empleadoras registradas en la plataforma.
+      Solo las empresas validadas por administración pueden acceder al
+      directorio de talentos.
+  - name: Administración
+    description: |
+      Gestión del proceso de intermediación entre empresas y talentos.
+      Registra y hace seguimiento de las solicitudes de contacto a través de
+      un flujo de estados definido: pendiente → contactado → entrevista →
+      seleccionado / no-seleccionado → proceso-cerrado.
+
+# =============================================================================
+# PATHS — Definición de todos los endpoints
+# =============================================================================
+
+paths:
+
+  # ---------------------------------------------------------------------------
+  # HEALTH
+  # ---------------------------------------------------------------------------
+  /health:
+    get:
+      tags: [Health]
+      operationId: healthCheck
+      summary: Verificar estado del servicio
+      description: |
+        Endpoint de observabilidad. Verifica que la API está disponible y
+        responde correctamente. Útil para monitoreo, load balancers y
+        pipelines de CI/CD.
+
+        **No requiere autenticación.**
+        **Tiempo de respuesta esperado:** < 50 ms
+      responses:
+        "200":
+          description: Servicio operativo
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              examples:
+                online:
+                  summary: API funcionando correctamente
+                  value:
+                    status: online
+                    service: ProviEmplea API
+                    version: "1.0.0"
+                    timestamp: "2026-05-22T10:30:00+00:00"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ---------------------------------------------------------------------------
+  # PERSONAS
+  # ---------------------------------------------------------------------------
+  /personas:
+    get:
+      tags: [Personas]
+      operationId: listarPersonas
+      summary: Listar talentos en formato CV ciego
+      description: |
+        Retorna todos los perfiles activos en formato **CV ciego**: sin datos
+        personales identificatorios (sin nombre, email, teléfono, dirección).
+        Solo se exponen competencias, experiencia y condiciones laborales.
+
+        Permite filtrar por validación y nivel educacional.
+
+        **Optimización de caché:** Los resultados se cachean 5 minutos.
+        Para obtener datos frescos, el cliente puede pasar el header
+        `Cache-Control: no-cache`.
+      parameters:
+        - name: validado
+          in: query
+          required: false
+          description: |
+            Si es `true`, retorna solo perfiles validados por administración.
+            Los perfiles no validados no son visibles para las empresas.
+          schema:
+            type: boolean
+            example: true
+        - name: nivel_educacional
+          in: query
+          required: false
+          description: Filtra por nivel educacional del talento
+          schema:
+            type: string
+            enum: [basica, media, tecnica, universitaria, postgrado]
+            example: universitaria
+      responses:
+        "200":
+          description: Listado de CV ciegos obtenido exitosamente
+          headers:
+            X-Cache:
+              description: Indica si la respuesta fue servida desde caché (HIT/MISS)
+              schema:
+                type: string
+                example: HIT
+            X-RateLimit-Remaining:
+              description: Solicitudes restantes en la ventana actual
+              schema:
+                type: integer
+                example: 58
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PersonaCVCiego"
+              examples:
+                listaConDatos:
+                  summary: Lista con dos talentos
+                  value:
+                    success: true
+                    data:
+                      - id: "550e8400-e29b-41d4-a716-446655440000"
+                        codigo_talento: "PROV-2026-A1B2"
+                        resumen: "Profesional con experiencia en desarrollo web y APIs REST"
+                        nivel_educacional: universitaria
+                        titulo_carrera: "Ingeniería Informática"
+                        anio_egreso: 2020
+                        anios_experiencia: 5
+                        areas_experiencia: ["Desarrollo Web", "APIs REST", "DevOps"]
+                        competencias: ["PHP", "Laravel", "MySQL", "Docker"]
+                        rango_renta: "800k-1.2M"
+                        tipo_jornada: completa
+                        modalidad: hibrido
+                        idiomas:
+                          - idioma: Inglés
+                            nivel: avanzado
+                        persona_discapacidad: false
+                      - id: "550e8400-e29b-41d4-a716-446655440001"
+                        codigo_talento: "PROV-2026-C3D4"
+                        resumen: "Técnico en contabilidad con experiencia en PYME"
+                        nivel_educacional: tecnica
+                        titulo_carrera: "Técnico en Contabilidad"
+                        anio_egreso: 2018
+                        anios_experiencia: 7
+                        areas_experiencia: ["Contabilidad", "Finanzas"]
+                        competencias: ["Excel Avanzado", "SAP", "Contabilidad General"]
+                        rango_renta: "600k-800k"
+                        tipo_jornada: completa
+                        modalidad: presencial
+                        idiomas: []
+                        persona_discapacidad: false
+                listaVacia:
+                  summary: Sin talentos registrados
+                  value:
+                    success: true
+                    data: []
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    post:
+      tags: [Personas]
+      operationId: crearPersona
+      summary: Registrar nuevo talento
+      description: |
+        Crea un nuevo perfil de talento en la plataforma.
+
+        El `codigo_talento` se genera automáticamente con el formato
+        `PROV-{AÑO}-{HASH4}` (ej: `PROV-2026-A1B2`).
+
+        El campo `email` debe ser único en la plataforma.
+
+        **El perfil se crea con `validado: false` y `activo: true`.**
+        Un administrador deberá validarlo para que aparezca en la vitrina.
+
+        **Porcentaje de completitud:** Se calcula automáticamente según los
+        campos opcionales completados.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonaInput"
+            examples:
+              perfilCompleto:
+                summary: Perfil con todos los campos
+                value:
+                  email: "talento.completo@ejemplo.cl"
+                  telefono: "+56912345678"
+                  resumen: "Desarrolladora fullstack con 4 años de experiencia en startups tecnológicas"
+                  nivel_educacional: universitaria
+                  titulo_carrera: "Ingeniería Civil Informática"
+                  anio_egreso: 2021
+                  anios_experiencia: 4
+                  areas_experiencia: ["Desarrollo Web", "Aplicaciones Móviles"]
+                  competencias: ["React", "Node.js", "PHP", "Laravel", "MySQL", "Docker"]
+                  rango_renta: "1.2M-1.8M"
+                  tipo_jornada: completa
+                  modalidad: remoto
+                  cursos:
+                    - nombre: "AWS Cloud Practitioner"
+                      institucion: "Amazon Web Services"
+                      anio: 2023
+                    - nombre: "Scrum Master"
+                      institucion: "Scrum Alliance"
+                      anio: 2022
+                  idiomas:
+                    - idioma: Inglés
+                      nivel: avanzado
+                    - idioma: Portugués
+                      nivel: intermedio
+                  portafolio_url: "https://miportafolio.dev"
+                  persona_discapacidad: false
+              perfilMinimo:
+                summary: Solo con el campo requerido (email)
+                value:
+                  email: "talento.minimo@ejemplo.cl"
+      responses:
+        "201":
+          description: Talento registrado exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: "#/components/schemas/Persona"
+              examples:
+                creado:
+                  summary: Talento creado
+                  value:
+                    success: true
+                    data:
+                      id: "550e8400-e29b-41d4-a716-446655440000"
+                      email: "talento.completo@ejemplo.cl"
+                      codigo_talento: "PROV-2026-A1B2"
+                      nivel_educacional: universitaria
+                      porcentaje_completitud: 85
+                      validado: false
+                      activo: true
+                      created_at: "2026-05-22T10:00:00+00:00"
+        "422":
+          description: Error de validación (email duplicado u otros campos inválidos)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorValidacion"
+              examples:
+                emailDuplicado:
+                  summary: Email ya registrado
+                  value:
+                    success: false
+                    message: "Los datos enviados no son válidos."
+                    errors:
+                      email: ["El campo email ya está en uso."]
+                nivelInvalido:
+                  summary: Nivel educacional fuera del enum
+                  value:
+                    success: false
+                    message: "Los datos enviados no son válidos."
+                    errors:
+                      nivel_educacional: ["El valor seleccionado no es válido. Use: basica, media, tecnica, universitaria o postgrado."]
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /personas/{id}:
+    parameters:
+      - $ref: "#/components/parameters/UUIDPath"
+
+    get:
+      tags: [Personas]
+      operationId: obtenerPersona
+      summary: Obtener perfil completo de un talento
+      description: |
+        Retorna el perfil **completo** de una persona, incluyendo datos de
+        contacto privados (email, teléfono). Este endpoint es de uso
+        administrativo.
+
+        Para la vista pública sin datos personales, usar `GET /personas`.
+      responses:
+        "200":
+          description: Perfil obtenido exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: "#/components/schemas/Persona"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    put:
+      tags: [Personas]
+      operationId: actualizarPersona
+      summary: Actualizar perfil de talento
+      description: |
+        Actualiza los datos de un perfil existente. Todos los campos son
+        opcionales; solo se modifican los campos enviados.
+
+        Si se envía `email`, debe ser único. Si se envía `nivel_educacional`,
+        debe ser uno de los valores válidos del enum.
+
+        Al actualizar el perfil, el `porcentaje_completitud` se recalcula
+        automáticamente.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonaInput"
+            examples:
+              actualizarCompetencias:
+                summary: Actualizar competencias e idiomas
+                value:
+                  competencias: ["PHP", "Laravel", "Vue.js", "MySQL", "Redis"]
+                  idiomas:
+                    - idioma: Inglés
+                      nivel: avanzado
+              actualizarCondicionesLaborales:
+                summary: Cambiar condiciones laborales deseadas
+                value:
+                  rango_renta: "1.2M-1.8M"
+                  tipo_jornada: part-time
+                  modalidad: remoto
+      responses:
+        "200":
+          description: Perfil actualizado exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: "#/components/schemas/Persona"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    delete:
+      tags: [Personas]
+      operationId: desactivarPersona
+      summary: Desactivar perfil de talento
+      description: |
+        Realiza un **soft delete**: pone `activo = false` pero **no elimina**
+        el registro de la base de datos. El perfil deja de aparecer en el
+        listado público y en las búsquedas de empresas.
+
+        Esta estrategia preserva la integridad referencial con la tabla
+        `contactos_solicitados`.
+      responses:
+        "200":
+          description: Perfil desactivado exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "Persona desactivada exitosamente."
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /personas/{id}/validar:
+    patch:
+      tags: [Personas]
+      operationId: validarPersona
+      summary: Encender o apagar visibilidad del perfil en la vitrina
+      description: |
+        **Toggle** del campo `validado`. Cambia el estado actual al opuesto:
+        - Si `validado = false` → lo pone `true` (**encender** en vitrina)
+        - Si `validado = true` → lo pone `false` (**apagar** de vitrina)
+
+        Solo los perfiles con `validado: true` aparecen en `GET /personas`
+        (la vista pública para empresas). **No requiere body.**
+
+        **Tiempo de respuesta esperado:** < 100 ms
+      parameters:
+        - $ref: "#/components/parameters/UUIDPath"
+      responses:
+        "200":
+          description: Estado de validación cambiado (toggle)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: "#/components/schemas/Persona"
+              examples:
+                encendido:
+                  summary: Perfil encendido (ahora visible)
+                  value:
+                    success: true
+                    data:
+                      id: "550e8400-e29b-41d4-a716-446655440000"
+                      codigo_talento: "PROV-2026-A1B2"
+                      validado: true
+                      activo: true
+                apagado:
+                  summary: Perfil apagado (ahora oculto)
+                  value:
+                    success: true
+                    data:
+                      id: "550e8400-e29b-41d4-a716-446655440000"
+                      codigo_talento: "PROV-2026-A1B2"
+                      validado: false
+                      activo: true
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ---------------------------------------------------------------------------
+  # EMPRESAS
+  # ---------------------------------------------------------------------------
+  /empresas:
+    get:
+      tags: [Empresas]
+      operationId: listarEmpresas
+      summary: Listar empresas empleadoras
+      description: |
+        Retorna todas las empresas activas registradas en la plataforma.
+        Permite filtrar por tipo de empresa.
+
+        **Optimización:** Resultados cacheados 5 minutos.
+      parameters:
+        - name: tipo_empresa
+          in: query
+          required: false
+          description: Filtra por tipo de empresa
+          schema:
+            type: string
+            enum: [contratacion-directa, est, outsourcing]
+            example: contratacion-directa
+      responses:
+        "200":
+          description: Listado de empresas obtenido exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Empresa"
+              examples:
+                listaEmpresas:
+                  summary: Lista con dos empresas
+                  value:
+                    success: true
+                    data:
+                      - id: "550e8400-e29b-41d4-a716-446655440010"
+                        nombre_empresa: "TechCorp SpA"
+                        rut_empresa: "76123456-7"
+                        email: "rrhh@techcorp.cl"
+                        tipo_empresa: contratacion-directa
+                        rubro: "Tecnología"
+                        beneficios: ["Seguro complementario", "Trabajo remoto"]
+                        validado: true
+                        activo: true
+                      - id: "550e8400-e29b-41d4-a716-446655440011"
+                        nombre_empresa: "Recursos Humanos Plus"
+                        rut_empresa: "77654321-2"
+                        email: "seleccion@rhplus.cl"
+                        tipo_empresa: est
+                        rubro: "Recursos Humanos"
+                        beneficios: []
+                        validado: false
+                        activo: true
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    post:
+      tags: [Empresas]
+      operationId: crearEmpresa
+      summary: Registrar nueva empresa
+      description: |
+        Registra una nueva empresa empleadora en la plataforma.
+
+        Los campos `rut_empresa` y `email` deben ser únicos.
+        La empresa se crea con `validado: false` y `activo: true`.
+        Un administrador deberá validarla para que pueda buscar talentos.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmpresaInput"
+            examples:
+              empresaCompleta:
+                summary: Empresa con todos los campos
+                value:
+                  nombre_empresa: "TechCorp SpA"
+                  rut_empresa: "76123456-7"
+                  email: "rrhh@techcorp.cl"
+                  tipo_empresa: contratacion-directa
+                  rubro: "Tecnología"
+                  presentacion: "Empresa tecnológica especializada en soluciones cloud"
+                  beneficios: ["Seguro complementario", "Trabajo remoto", "Capacitaciones"]
+                  contacto_nombre: "Ana López"
+                  contacto_email: "ana.lopez@techcorp.cl"
+                  contacto_telefono: "+56922334455"
+                  logo_url: "https://techcorp.cl/logo.png"
+              empresaMinima:
+                summary: Solo campos requeridos
+                value:
+                  nombre_empresa: "Consultora XYZ Ltda"
+                  rut_empresa: "78900123-4"
+                  email: "contacto@xyz.cl"
+                  tipo_empresa: outsourcing
+                  contacto_nombre: "Carlos Soto"
+                  contacto_email: "carlos@xyz.cl"
+      responses:
+        "201":
+          description: Empresa registrada exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: "#/components/schemas/Empresa"
+        "422":
+          description: Error de validación
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorValidacion"
+              examples:
+                rutDuplicado:
+                  summary: RUT ya registrado
+                  value:
+                    success: false
+                    message: "Los datos enviados no son válidos."
+                    errors:
+                      rut_empresa: ["El RUT de empresa ya está registrado en la plataforma."]
+                camposRequeridos:
+                  summary: Faltan campos obligatorios
+                  value:
+                    success: false
+                    message: "Los datos enviados no son válidos."
+                    errors:
+                      nombre_empresa: ["El campo nombre_empresa es obligatorio."]
+                      contacto_nombre: ["El campo contacto_nombre es obligatorio."]
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /empresas/{id}:
+    parameters:
+      - $ref: "#/components/parameters/UUIDPath"
+
+    get:
+      tags: [Empresas]
+      operationId: obtenerEmpresa
+      summary: Obtener empresa por ID
+      description: Retorna el perfil completo de una empresa empleadora.
+      responses:
+        "200":
+          description: Empresa obtenida exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: "#/components/schemas/Empresa"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    put:
+      tags: [Empresas]
+      operationId: actualizarEmpresa
+      summary: Actualizar datos de empresa
+      description: |
+        Actualiza los datos de una empresa existente. Todos los campos son
+        opcionales; solo se modifican los campos enviados.
+
+        Si se envía `rut_empresa` o `email`, deben ser únicos excluyendo
+        la empresa actual (regla `unique:empresas,campo,{id}`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmpresaInput"
+            examples:
+              actualizarContacto:
+                summary: Cambiar datos de contacto
+                value:
+                  contacto_nombre: "María González"
+                  contacto_email: "mgonzalez@techcorp.cl"
+                  contacto_telefono: "+56933445566"
+              actualizarBeneficios:
+                summary: Actualizar lista de beneficios
+                value:
+                  beneficios:
+                    - "Seguro de vida"
+                    - "Bono de desempeño"
+                    - "Días adicionales de vacaciones"
+                    - "Capacitaciones pagadas"
+      responses:
+        "200":
+          description: Empresa actualizada exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: "#/components/schemas/Empresa"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    delete:
+      tags: [Empresas]
+      operationId: desactivarEmpresa
+      summary: Desactivar empresa
+      description: |
+        Realiza un **soft delete**: pone `activo = false` pero no elimina el
+        registro. La empresa deja de aparecer en el directorio.
+
+        Preserva la integridad de los `contactos_solicitados` asociados.
+      responses:
+        "200":
+          description: Empresa desactivada exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      message:
+                        type: string
+                        example: "Empresa desactivada exitosamente."
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /empresas/{id}/validar:
+    patch:
+      tags: [Empresas]
+      operationId: validarEmpresa
+      summary: Encender o apagar validación de empresa
+      description: |
+        **Toggle** del campo `validado`. Cambia el estado actual al opuesto:
+        - Si `validado = false` → lo pone `true` (**encender**)
+        - Si `validado = true` → lo pone `false` (**apagar**)
+
+        Solo las empresas con `validado: true` pueden solicitar contacto
+        con talentos. **No requiere body.**
+
+        **Tiempo de respuesta esperado:** < 100 ms
+      parameters:
+        - $ref: "#/components/parameters/UUIDPath"
+      responses:
+        "200":
+          description: Empresa validada exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: "#/components/schemas/Empresa"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ---------------------------------------------------------------------------
+  # ADMINISTRACIÓN
+  # ---------------------------------------------------------------------------
+  /admin/contactos:
+    get:
+      tags: [Administración]
+      operationId: listarContactos
+      summary: Listar solicitudes de contacto
+      description: |
+        Retorna todas las solicitudes de contacto entre empresas y talentos,
+        con los objetos `empresa` y `persona` embebidos para facilitar la
+        visualización sin solicitudes adicionales.
+
+        Permite filtrar por estado del proceso.
+
+        ### Flujo de estados
+        ```
+        pendiente → contactado → entrevista → seleccionado
+                                            → no-seleccionado
+                                 (ambos) → proceso-cerrado
+        ```
+      parameters:
+        - name: estado
+          in: query
+          required: false
+          description: Filtra las solicitudes por estado del proceso
+          schema:
+            type: string
+            enum:
+              - pendiente
+              - contactado
+              - entrevista
+              - seleccionado
+              - no-seleccionado
+              - proceso-cerrado
+            example: pendiente
+      responses:
+        "200":
+          description: Listado de solicitudes obtenido exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ContactoSolicitado"
+              examples:
+                listaContactos:
+                  summary: Dos solicitudes en distintos estados
+                  value:
+                    success: true
+                    data:
+                      - id: "c1c00000-0000-0000-0000-000000000001"
+                        empresa_id: "550e8400-e29b-41d4-a716-446655440010"
+                        persona_id: "550e8400-e29b-41d4-a716-446655440000"
+                        estado: entrevista
+                        notas_admin: "Entrevista técnica agendada para el 28/05"
+                        fecha_contacto: "2026-05-20"
+                        fecha_entrevista: "2026-05-25"
+                        fecha_resultado: null
+                        empresa:
+                          nombre_empresa: "TechCorp SpA"
+                          rubro: "Tecnología"
+                        persona:
+                          codigo_talento: "PROV-2026-A1B2"
+                          nivel_educacional: universitaria
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    post:
+      tags: [Administración]
+      operationId: crearContactoSolicitado
+      summary: Registrar solicitud de contacto
+      description: |
+        Registra que una empresa desea contactar a un talento.
+
+        **Regla de negocio:** No puede existir una solicitud activa previa
+        entre los mismos dos actores. Se considera "activa" toda solicitud
+        cuyo estado no sea `no-seleccionado` ni `proceso-cerrado`.
+
+        Si la empresa ya tiene una solicitud activa con ese talento, se
+        retorna `409 Conflict`.
+
+        La solicitud se crea con estado `pendiente` y sin fechas de proceso.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContactoInput"
+            examples:
+              solicitud:
+                summary: Solicitud de contacto estándar
+                value:
+                  empresa_id: "550e8400-e29b-41d4-a716-446655440010"
+                  persona_id: "550e8400-e29b-41d4-a716-446655440000"
+                  notas_admin: "Empresa interesada en perfil de desarrollo backend PHP/Laravel"
+      responses:
+        "201":
+          description: Solicitud de contacto creada en estado `pendiente`
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: "#/components/schemas/ContactoSolicitado"
+              examples:
+                creado:
+                  summary: Solicitud creada exitosamente
+                  value:
+                    success: true
+                    data:
+                      id: "c1c00000-0000-0000-0000-000000000001"
+                      empresa_id: "550e8400-e29b-41d4-a716-446655440010"
+                      persona_id: "550e8400-e29b-41d4-a716-446655440000"
+                      estado: pendiente
+                      notas_admin: "Empresa interesada en perfil de desarrollo backend PHP/Laravel"
+                      fecha_contacto: null
+                      fecha_entrevista: null
+                      fecha_resultado: null
+        "409":
+          description: Ya existe una solicitud activa entre esta empresa y talento
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorGeneral"
+              examples:
+                conflicto:
+                  value:
+                    success: false
+                    message: "Ya existe una solicitud activa entre esta empresa y talento."
+        "422":
+          description: IDs inválidos o inexistentes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorValidacion"
+              examples:
+                idInexistente:
+                  value:
+                    success: false
+                    message: "Los datos enviados no son válidos."
+                    errors:
+                      empresa_id: ["La empresa seleccionada no existe."]
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /admin/contactos/{id}/estado:
+    patch:
+      tags: [Administración]
+      operationId: actualizarEstadoContacto
+      summary: Actualizar estado del proceso de selección
+      description: |
+        Avanza el estado del proceso de selección de un contacto.
+
+        Las fechas de proceso se registran **automáticamente** según el estado:
+
+        | Estado nuevo | Fecha registrada |
+        |---|---|
+        | `contactado` | `fecha_contacto` (si no tiene) |
+        | `entrevista` | `fecha_entrevista` (si no tiene) |
+        | `seleccionado` | `fecha_resultado` (si no tiene) |
+        | `no-seleccionado` | `fecha_resultado` (si no tiene) |
+
+        Se pueden agregar `notas_admin` adicionales en cada transición.
+      parameters:
+        - $ref: "#/components/parameters/UUIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EstadoInput"
+            examples:
+              avanzarAContactado:
+                summary: Marcar como contactado
+                value:
+                  estado: contactado
+                  notas_admin: "Se envió correo al talento el día 22/05/2026"
+              agendarEntrevista:
+                summary: Agendar entrevista
+                value:
+                  estado: entrevista
+                  notas_admin: "Entrevista técnica agendada para 28/05/2026 a las 10:00 hrs"
+              marcarSeleccionado:
+                summary: Talento seleccionado
+                value:
+                  estado: seleccionado
+                  notas_admin: "Proceso exitoso. Inicio: 01/06/2026"
+              marcarNoSeleccionado:
+                summary: Talento no seleccionado
+                value:
+                  estado: no-seleccionado
+                  notas_admin: "No cumplía requisito de experiencia mínima en el área"
+              cerrarProceso:
+                summary: Cerrar proceso
+                value:
+                  estado: proceso-cerrado
+      responses:
+        "200":
+          description: Estado actualizado exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: "#/components/schemas/ContactoSolicitado"
+              examples:
+                actualizado:
+                  summary: Proceso avanzado a entrevista
+                  value:
+                    success: true
+                    data:
+                      id: "c1c00000-0000-0000-0000-000000000001"
+                      estado: entrevista
+                      fecha_contacto: "2026-05-20"
+                      fecha_entrevista: "2026-05-25"
+                      fecha_resultado: null
+                      notas_admin: "Entrevista técnica agendada para 28/05/2026"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: Estado no válido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorValidacion"
+              examples:
+                estadoInvalido:
+                  value:
+                    success: false
+                    message: "Los datos enviados no son válidos."
+                    errors:
+                      estado: ["El valor 'cancelado' no es un estado válido."]
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /admin/estadisticas:
+    get:
+      tags: [Administración]
+      operationId: getEstadisticas
+      summary: Estadísticas generales de la plataforma
+      description: |
+        Retorna un resumen estadístico de la actividad de la plataforma.
+        Útil para el dashboard del equipo de Providencia.
+
+        **Optimización:** Resultados cacheados 1 minuto.
+        **Tiempo de respuesta esperado:** < 500 ms (requiere 5+ consultas agregadas).
+      responses:
+        "200":
+          description: Estadísticas generadas exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: "#/components/schemas/Estadisticas"
+              examples:
+                estadisticas:
+                  summary: Datos reales de la plataforma
+                  value:
+                    success: true
+                    data:
+                      total_personas: 45
+                      personas_activas: 42
+                      personas_validadas: 38
+                      total_empresas: 12
+                      empresas_activas: 11
+                      empresas_validadas: 10
+                      contactos_pendientes: 5
+                      contactos_en_proceso: 8
+                      contactos_exitosos: 15
+                      contactos_cerrados: 3
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+# =============================================================================
+# COMPONENTS — Schemas, Parameters, Responses reutilizables
+# =============================================================================
+
+components:
+
+  # ---------------------------------------------------------------------------
+  # PARAMETERS
+  # ---------------------------------------------------------------------------
+  parameters:
+    UUIDPath:
+      name: id
+      in: path
+      required: true
+      description: Identificador único UUID del recurso
+      schema:
+        type: string
+        format: uuid
+        example: "550e8400-e29b-41d4-a716-446655440000"
+
+  # ---------------------------------------------------------------------------
+  # RESPONSES reutilizables
+  # ---------------------------------------------------------------------------
+  responses:
+    NotFound:
+      description: Recurso no encontrado
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorGeneral"
+          examples:
+            personaNoEncontrada:
+              summary: Persona no encontrada
+              value:
+                success: false
+                message: "Persona no encontrada."
+            empresaNoEncontrada:
+              summary: Empresa no encontrada
+              value:
+                success: false
+                message: "Empresa no encontrada."
+
+    ValidationError:
+      description: Error de validación de datos de entrada
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorValidacion"
+          example:
+            success: false
+            message: "Los datos enviados no son válidos."
+            errors:
+              email: ["El campo email ya está en uso."]
+              tipo_empresa: ["El valor seleccionado no es válido."]
+
+    InternalError:
+      description: Error interno del servidor
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorGeneral"
+          example:
+            success: false
+            message: "Error interno del servidor. Intente nuevamente más tarde."
+
+  # ---------------------------------------------------------------------------
+  # SCHEMAS
+  # ---------------------------------------------------------------------------
+  schemas:
+
+    # ---- Health ----
+    HealthResponse:
+      type: object
+      description: Respuesta del endpoint de salud
+      properties:
+        status:
+          type: string
+          enum: [online, degraded, offline]
+          example: online
+        service:
+          type: string
+          example: ProviEmplea API
+        version:
+          type: string
+          example: "1.0.0"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-05-22T10:30:00+00:00"
+
+    # ---- Persona (modelo completo con datos privados) ----
+    Persona:
+      type: object
+      description: Modelo completo de persona/talento. Incluye datos de contacto privados.
+      required: [id, email, codigo_talento]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Identificador único UUID
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        email:
+          type: string
+          format: email
+          description: Correo electrónico (dato privado, no visible en CV ciego)
+          example: "talento@ejemplo.cl"
+        telefono:
+          type: string
+          nullable: true
+          maxLength: 15
+          description: Teléfono de contacto (dato privado)
+          example: "+56912345678"
+        codigo_talento:
+          type: string
+          description: Código único generado automáticamente. Formato PROV-{AÑO}-{HASH4}
+          example: "PROV-2026-A1B2"
+        resumen:
+          type: string
+          nullable: true
+          description: Presentación profesional del talento
+          example: "Desarrollador fullstack con 5 años de experiencia"
+        nivel_educacional:
+          type: string
+          nullable: true
+          enum: [basica, media, tecnica, universitaria, postgrado]
+          example: universitaria
+        titulo_carrera:
+          type: string
+          nullable: true
+          example: "Ingeniería Informática"
+        anio_egreso:
+          type: integer
+          nullable: true
+          minimum: 1950
+          example: 2020
+        anios_experiencia:
+          type: integer
+          minimum: 0
+          default: 0
+          example: 5
+        areas_experiencia:
+          type: array
+          nullable: true
+          description: Áreas laborales donde ha trabajado
+          items:
+            type: string
+          example: ["Desarrollo Web", "APIs REST"]
+        competencias:
+          type: array
+          nullable: true
+          description: Habilidades técnicas y blandas
+          items:
+            type: string
+          example: ["PHP", "Laravel", "MySQL", "Docker"]
+        rango_renta:
+          type: string
+          nullable: true
+          description: Rango de renta esperado
+          example: "800k-1.2M"
+        tipo_jornada:
+          type: string
+          nullable: true
+          enum: [completa, part-time, por-horas]
+          example: completa
+        modalidad:
+          type: string
+          nullable: true
+          enum: [presencial, remoto, hibrido]
+          example: hibrido
+        cursos:
+          type: array
+          nullable: true
+          description: Cursos y certificaciones relevantes
+          items:
+            $ref: "#/components/schemas/Curso"
+        idiomas:
+          type: array
+          nullable: true
+          description: Idiomas con nivel de dominio
+          items:
+            $ref: "#/components/schemas/Idioma"
+        portafolio_url:
+          type: string
+          format: uri
+          nullable: true
+          example: "https://miportafolio.dev"
+        persona_discapacidad:
+          type: boolean
+          default: false
+          description: Indica si la persona tiene discapacidad (Ley 21.015)
+        validado:
+          type: boolean
+          default: false
+          description: Indica si el perfil fue validado por administración
+        activo:
+          type: boolean
+          default: true
+          description: Indica si el perfil está activo (false = soft deleted)
+        porcentaje_completitud:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Porcentaje de campos completados del perfil
+          example: 75
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-05-22T10:00:00+00:00"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2026-05-22T10:00:00+00:00"
+
+    # ---- Persona CV Ciego (datos anonimizados para empresas) ----
+    PersonaCVCiego:
+      type: object
+      description: |
+        Perfil de talento en formato CV ciego. **No incluye** datos identificatorios
+        (sin email, teléfono, nombre, dirección, comuna).
+        Solo datos profesionales y de condiciones laborales.
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        codigo_talento:
+          type: string
+          example: "PROV-2026-A1B2"
+        resumen:
+          type: string
+          nullable: true
+          example: "Profesional con experiencia en desarrollo web"
+        nivel_educacional:
+          type: string
+          nullable: true
+          enum: [basica, media, tecnica, universitaria, postgrado]
+          example: universitaria
+        titulo_carrera:
+          type: string
+          nullable: true
+          example: "Ingeniería Informática"
+        anio_egreso:
+          type: integer
+          nullable: true
+          example: 2020
+        anios_experiencia:
+          type: integer
+          example: 5
+        areas_experiencia:
+          type: array
+          nullable: true
+          items:
+            type: string
+          example: ["Desarrollo Web", "APIs REST"]
+        competencias:
+          type: array
+          nullable: true
+          items:
+            type: string
+          example: ["PHP", "Laravel", "MySQL"]
+        rango_renta:
+          type: string
+          nullable: true
+          example: "800k-1.2M"
+        tipo_jornada:
+          type: string
+          nullable: true
+          enum: [completa, part-time, por-horas]
+          example: completa
+        modalidad:
+          type: string
+          nullable: true
+          enum: [presencial, remoto, hibrido]
+          example: hibrido
+        idiomas:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/Idioma"
+        persona_discapacidad:
+          type: boolean
+          example: false
+
+    # ---- Input Persona ----
+    PersonaInput:
+      type: object
+      description: Campos para crear o actualizar un talento. Solo `email` es requerido en creación.
+      properties:
+        email:
+          type: string
+          format: email
+          example: "talento@ejemplo.cl"
+        telefono:
+          type: string
+          maxLength: 15
+          example: "+56912345678"
+        resumen:
+          type: string
+          example: "Desarrollador con experiencia en e-commerce"
+        nivel_educacional:
+          type: string
+          enum: [basica, media, tecnica, universitaria, postgrado]
+          example: universitaria
+        titulo_carrera:
+          type: string
+          example: "Ingeniería Informática"
+        anio_egreso:
+          type: integer
+          minimum: 1950
+          example: 2020
+        anios_experiencia:
+          type: integer
+          minimum: 0
+          example: 5
+        areas_experiencia:
+          type: array
+          items:
+            type: string
+          example: ["Desarrollo Web", "APIs REST"]
+        competencias:
+          type: array
+          items:
+            type: string
+          example: ["PHP", "Laravel", "MySQL", "Docker"]
+        rango_renta:
+          type: string
+          example: "800k-1.2M"
+        tipo_jornada:
+          type: string
+          enum: [completa, part-time, por-horas]
+          example: completa
+        modalidad:
+          type: string
+          enum: [presencial, remoto, hibrido]
+          example: hibrido
+        cursos:
+          type: array
+          items:
+            $ref: "#/components/schemas/Curso"
+        idiomas:
+          type: array
+          items:
+            $ref: "#/components/schemas/Idioma"
+        portafolio_url:
+          type: string
+          format: uri
+          example: "https://miportafolio.dev"
+        persona_discapacidad:
+          type: boolean
+          default: false
+
+    # ---- Empresa (modelo completo) ----
+    Empresa:
+      type: object
+      description: Modelo completo de empresa empleadora
+      required: [id, nombre_empresa, rut_empresa, email, tipo_empresa, contacto_nombre, contacto_email]
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440010"
+        nombre_empresa:
+          type: string
+          description: Razón social de la empresa
+          example: "TechCorp SpA"
+        rut_empresa:
+          type: string
+          description: RUT único de la empresa
+          example: "76123456-7"
+        email:
+          type: string
+          format: email
+          description: Correo institucional único
+          example: "rrhh@techcorp.cl"
+        logo_url:
+          type: string
+          format: uri
+          nullable: true
+          example: "https://techcorp.cl/logo.png"
+        rubro:
+          type: string
+          nullable: true
+          example: "Tecnología"
+        tipo_empresa:
+          type: string
+          enum: [contratacion-directa, est, outsourcing]
+          description: |
+            Tipo de empresa:
+            - `contratacion-directa`: Contrata directamente
+            - `est`: Empresa de servicios transitorios
+            - `outsourcing`: Externalización de servicios
+          example: contratacion-directa
+        presentacion:
+          type: string
+          nullable: true
+          example: "Empresa tecnológica líder en soluciones cloud"
+        beneficios:
+          type: array
+          nullable: true
+          description: Lista de beneficios que ofrece la empresa
+          items:
+            type: string
+          example: ["Seguro complementario", "Trabajo remoto", "Capacitaciones"]
+        contacto_nombre:
+          type: string
+          description: Nombre del responsable de RRHH
+          example: "Ana López"
+        contacto_email:
+          type: string
+          format: email
+          description: Correo del responsable de RRHH
+          example: "ana.lopez@techcorp.cl"
+        contacto_telefono:
+          type: string
+          nullable: true
+          maxLength: 20
+          example: "+56922334455"
+        validado:
+          type: boolean
+          default: false
+        activo:
+          type: boolean
+          default: true
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-05-22T09:00:00+00:00"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2026-05-22T09:00:00+00:00"
+
+    # ---- Input Empresa ----
+    EmpresaInput:
+      type: object
+      description: Campos para crear o actualizar una empresa
+      properties:
+        nombre_empresa:
+          type: string
+          example: "TechCorp SpA"
+        rut_empresa:
+          type: string
+          example: "76123456-7"
+        email:
+          type: string
+          format: email
+          example: "rrhh@techcorp.cl"
+        tipo_empresa:
+          type: string
+          enum: [contratacion-directa, est, outsourcing]
+          example: contratacion-directa
+        rubro:
+          type: string
+          example: "Tecnología"
+        presentacion:
+          type: string
+          example: "Empresa especializada en soluciones cloud"
+        beneficios:
+          type: array
+          items:
+            type: string
+          example: ["Seguro complementario", "Trabajo remoto"]
+        contacto_nombre:
+          type: string
+          example: "Ana López"
+        contacto_email:
+          type: string
+          format: email
+          example: "ana@techcorp.cl"
+        contacto_telefono:
+          type: string
+          maxLength: 20
+          example: "+56922334455"
+        logo_url:
+          type: string
+          format: uri
+          example: "https://techcorp.cl/logo.png"
+
+    # ---- Contacto Solicitado ----
+    ContactoSolicitado:
+      type: object
+      description: Solicitud de contacto entre una empresa y un talento
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "c1c00000-0000-0000-0000-000000000001"
+        empresa_id:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440010"
+        persona_id:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        estado:
+          type: string
+          enum: [pendiente, contactado, entrevista, seleccionado, no-seleccionado, proceso-cerrado]
+          description: |
+            Estado actual del proceso de selección:
+            - `pendiente`: Solicitud registrada, sin acción aún
+            - `contactado`: La administración contactó al talento
+            - `entrevista`: Entrevista agendada con la empresa
+            - `seleccionado`: Talento seleccionado para el cargo
+            - `no-seleccionado`: Proceso descartado para este talento
+            - `proceso-cerrado`: Proceso finalizado (tras selección o no-selección)
+          example: entrevista
+        notas_admin:
+          type: string
+          nullable: true
+          example: "Entrevista técnica agendada para 28/05/2026"
+        fecha_contacto:
+          type: string
+          format: date
+          nullable: true
+          description: Fecha en que se contactó al talento (se registra automáticamente)
+          example: "2026-05-20"
+        fecha_entrevista:
+          type: string
+          format: date
+          nullable: true
+          description: Fecha de la entrevista (se registra automáticamente)
+          example: "2026-05-28"
+        fecha_resultado:
+          type: string
+          format: date
+          nullable: true
+          description: Fecha del resultado final (se registra automáticamente)
+          example: null
+        empresa:
+          $ref: "#/components/schemas/Empresa"
+          description: Datos de la empresa (incluido en las respuestas de listado)
+        persona:
+          $ref: "#/components/schemas/Persona"
+          description: Datos del talento (incluido en las respuestas de listado)
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-05-19T08:00:00+00:00"
+
+    # ---- Input Contacto ----
+    ContactoInput:
+      type: object
+      required: [empresa_id, persona_id]
+      properties:
+        empresa_id:
+          type: string
+          format: uuid
+          description: ID de la empresa que solicita el contacto (debe existir y estar activa)
+          example: "550e8400-e29b-41d4-a716-446655440010"
+        persona_id:
+          type: string
+          format: uuid
+          description: ID del talento a contactar (debe existir y estar activo)
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        notas_admin:
+          type: string
+          nullable: true
+          description: Notas internas para el equipo de Providencia
+          example: "Empresa interesada en perfil backend PHP/Laravel"
+
+    # ---- Input Estado ----
+    EstadoInput:
+      type: object
+      required: [estado]
+      properties:
+        estado:
+          type: string
+          enum: [pendiente, contactado, entrevista, seleccionado, no-seleccionado, proceso-cerrado]
+          example: entrevista
+        notas_admin:
+          type: string
+          nullable: true
+          example: "Entrevista agendada para el 28/05/2026"
+
+    # ---- Estadísticas ----
+    Estadisticas:
+      type: object
+      description: Resumen estadístico de actividad de la plataforma (caché 1 min)
+      properties:
+        total_personas:
+          type: integer
+          description: Total de personas registradas (activas + inactivas)
+          example: 45
+        personas_activas:
+          type: integer
+          description: Personas con activo=true
+          example: 42
+        personas_validadas:
+          type: integer
+          description: Personas con validacion aprobada por administración
+          example: 38
+        total_empresas:
+          type: integer
+          example: 12
+        empresas_activas:
+          type: integer
+          description: Empresas con activo=true
+          example: 11
+        empresas_validadas:
+          type: integer
+          example: 10
+        contactos_pendientes:
+          type: integer
+          description: Solicitudes sin acción aún
+          example: 5
+        contactos_en_proceso:
+          type: integer
+          description: Solicitudes en estado contactado o entrevista
+          example: 8
+        contactos_exitosos:
+          type: integer
+          description: Solicitudes que llegaron a estado seleccionado
+          example: 15
+        contactos_cerrados:
+          type: integer
+          description: Procesos finalizados (proceso-cerrado)
+          example: 3
+
+    # ---- Sub-tipos: Curso e Idioma ----
+    Curso:
+      type: object
+      description: Curso o certificación profesional
+      properties:
+        nombre:
+          type: string
+          example: "AWS Cloud Practitioner"
+        institucion:
+          type: string
+          example: "Amazon Web Services"
+        anio:
+          type: integer
+          example: 2023
+      example:
+        nombre: "Scrum Master Certified"
+        institucion: "Scrum Alliance"
+        anio: 2022
+
+    Idioma:
+      type: object
+      description: Idioma con nivel de dominio
+      properties:
+        idioma:
+          type: string
+          example: "Inglés"
+        nivel:
+          type: string
+          enum: [basico, intermedio, avanzado, nativo]
+          example: avanzado
+      example:
+        idioma: "Inglés"
+        nivel: avanzado
+
+    # ---- Respuestas de error ----
+    ErrorGeneral:
+      type: object
+      description: Respuesta de error sin detalle de campos
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: "Recurso no encontrado."
+
+    ErrorValidacion:
+      type: object
+      description: Respuesta de error con detalle de validación por campo
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: "Los datos enviados no son válidos."
+        errors:
+          type: object
+          description: Mapa campo → lista de mensajes de error
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          example:
+            email: ["El campo email ya está en uso."]
+            tipo_empresa: ["El valor seleccionado no es válido."]
