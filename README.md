@@ -1,66 +1,235 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# ProviEmplea — Backend API REST
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Backend de la plataforma **ProviEmplea**, un sistema de intermediación laboral que conecta personas en búsqueda de empleo con empresas que ofrecen vacantes. Construido con **Laravel 11**, contenerizado con **Docker** y documentado con **Swagger / OpenAPI 3.0**.
 
-## About Laravel
+---
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+## Tecnologías principales
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+| Capa | Tecnología |
+|---|---|
+| Lenguaje | PHP 8.2 |
+| Framework | Laravel 11 |
+| Base de datos | MySQL 8.0 |
+| Servidor web | Nginx 1.27 Alpine |
+| Contenedores | Docker + Docker Compose |
+| Documentación API | L5-Swagger (OpenAPI 3.0) |
+| Testing | PHPUnit 11 |
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+---
 
-## Learning Laravel
+## Requisitos previos
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) instalado y ejecutándose
+- [Git](https://git-scm.com/)
+- Puerto **8080** y **3306** libres en tu máquina
 
-You may also try the [Laravel Bootcamp](https://bootcamp.laravel.com), where you will be guided through building a modern Laravel application from scratch.
+---
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+## Instalación y puesta en marcha
 
-## Laravel Sponsors
+### 1. Clonar el repositorio
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+```bash
+git clone https://github.com/Steeein/proviemplea-backend.git
+cd proviemplea-backend
+```
 
-### Premium Partners
+### 2. Configurar variables de entorno
 
-- **[Vehikl](https://vehikl.com/)**
-- **[Tighten Co.](https://tighten.co)**
-- **[WebReinvent](https://webreinvent.com/)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel/)**
-- **[Cyber-Duck](https://cyber-duck.co.uk)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Jump24](https://jump24.co.uk)**
-- **[Redberry](https://redberry.international/laravel/)**
-- **[Active Logic](https://activelogic.com)**
-- **[byte5](https://byte5.de)**
-- **[OP.GG](https://op.gg)**
+```bash
+cp .env.example .env
+```
 
-## Contributing
+Edita el archivo `.env` y asegúrate de que las variables de base de datos coincidan con las del `docker-compose.yaml`:
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+```env
+DB_CONNECTION=mysql
+DB_HOST=db
+DB_PORT=3306
+DB_DATABASE=proviemplea
+DB_USERNAME=proviemplea_user
+DB_PASSWORD=proviemplea_pass
+```
 
-## Code of Conduct
+### 3. Levantar los contenedores
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+```bash
+docker compose up -d --build
+```
 
-## Security Vulnerabilities
+Esto levanta tres servicios:
+- `proviemplea_app` — PHP-FPM con Laravel
+- `proviemplea_web` — Nginx en el puerto 8080
+- `proviemplea_db` — MySQL 8.0 en el puerto 3306
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+### 4. Generar la clave de aplicación
 
-## License
+```bash
+docker compose exec app php artisan key:generate
+```
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+### 5. Ejecutar las migraciones
+
+```bash
+docker compose exec app php artisan migrate
+```
+
+### 6. (Opcional) Ejecutar los seeders
+
+```bash
+docker compose exec app php artisan db:seed
+```
+
+---
+
+## Verificar que el sistema está corriendo
+
+Abre tu navegador o ejecuta:
+
+```bash
+curl http://localhost:8080/api/health
+```
+
+Respuesta esperada:
+
+```json
+{
+  "status": "ok",
+  "timestamp": "2026-05-28T..."
+}
+```
+
+---
+
+## Documentación de la API (Swagger UI)
+
+Una vez los contenedores estén corriendo, la documentación interactiva está disponible en:
+
+```
+http://localhost:8080/api/documentation
+```
+
+Para regenerar el archivo de especificación OpenAPI desde las anotaciones del código:
+
+```bash
+docker compose exec app php artisan l5-swagger:generate
+```
+
+---
+
+## Endpoints disponibles
+
+Base URL: `http://localhost:8080/api`
+
+Rate limiting: **60 solicitudes por minuto** por IP.
+
+### Health
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| GET | `/health` | Estado del sistema |
+
+### Personas (Talentos)
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| GET | `/personas` | Listar CV ciegos (vitrina pública) |
+| POST | `/personas` | Registrar nuevo talento |
+| GET | `/personas/{id}` | Ver perfil completo (uso admin) |
+| PUT | `/personas/{id}` | Actualizar perfil |
+| DELETE | `/personas/{id}` | Desactivar perfil (soft delete) |
+| PATCH | `/personas/{id}/validar` | Activar/desactivar visibilidad en vitrina |
+
+### Empresas
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| GET | `/empresas` | Listar empresas |
+| POST | `/empresas` | Registrar empresa |
+| GET | `/empresas/{id}` | Ver empresa |
+| PUT | `/empresas/{id}` | Actualizar empresa |
+| DELETE | `/empresas/{id}` | Eliminar empresa |
+| PATCH | `/empresas/{id}/validar` | Activar/desactivar validación |
+
+### Administración
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| GET | `/admin/contactos` | Listar solicitudes de contacto |
+| POST | `/admin/contactos` | Crear solicitud de contacto |
+| PATCH | `/admin/contactos/{id}/estado` | Actualizar estado de contacto |
+| GET | `/admin/estadisticas` | Estadísticas generales del sistema |
+
+---
+
+## Estructura del proyecto
+
+```
+proviemplea-backend/
+├── app/
+│   ├── Http/Controllers/       # Controladores REST + Schemas Swagger
+│   ├── Models/                 # Modelos Eloquent (Persona, Empresa, ContactoSolicitado)
+│   ├── Providers/              # AppServiceProvider (rate limiting)
+│   └── Traits/                 # ApiResponse (respuestas JSON estandarizadas)
+├── config/
+│   └── l5-swagger.php          # Configuración de Swagger
+├── database/
+│   ├── migrations/             # Migraciones de la base de datos
+│   └── seeders/
+├── docker/
+│   ├── nginx/default.conf      # Configuración de Nginx
+│   └── php/Dockerfile          # Imagen PHP-FPM personalizada
+├── routes/
+│   └── api.php                 # Definición de todos los endpoints
+├── storage/api-docs/           # Especificación OpenAPI generada
+├── docker-compose.yaml
+└── .env.example
+```
+
+---
+
+## Comandos útiles
+
+```bash
+# Ver logs en tiempo real
+docker compose logs -f
+
+# Acceder al contenedor de la app
+docker compose exec app bash
+
+# Ejecutar tests
+docker compose exec app php artisan test
+
+# Detener los contenedores
+docker compose down
+
+# Detener y eliminar volúmenes (borra la base de datos)
+docker compose down -v
+```
+
+---
+
+## Variables de entorno relevantes
+
+| Variable | Descripción | Valor por defecto |
+|---|---|---|
+| `APP_ENV` | Entorno de la aplicación | `local` |
+| `APP_DEBUG` | Modo debug | `true` |
+| `DB_HOST` | Host de la base de datos | `db` |
+| `DB_DATABASE` | Nombre de la base de datos | `proviemplea` |
+| `DB_USERNAME` | Usuario de la base de datos | `proviemplea_user` |
+| `DB_PASSWORD` | Contraseña de la base de datos | `proviemplea_pass` |
+| `L5_SWAGGER_GENERATE_ALWAYS` | Regenerar Swagger en cada request | `true` (dev) |
+
+---
+
+## Autores
+
+- **Diego Abaroa Ramos** — [@Steeein](https://github.com/Steeein)
+
+---
+
+## Licencia
+
+Este proyecto fue desarrollado como evaluación académica para el curso de **Back End — Unidad 3**, año 2026.
