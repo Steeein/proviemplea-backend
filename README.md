@@ -233,4 +233,4 @@ docker compose down -v
 
 ## Licencia
 
-Este proyecto fue desarrollado como evaluación académica para el curso de **Back End — Unidad 3**, año 2026.
+Proyecto de portafolio, publicado para revisión de código.
